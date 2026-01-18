@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Game Box Tracker - Pro V2</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #020617; color: #f8fafc; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        .is-unowned { filter: grayscale(1) brightness(0.25); }
+        .rarity-icon { height: 26px; width: auto; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8)); transition: all 0.3s; }
+        .attr-icon { height: 36px; width: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.9)); z-index: 40; transition: all 0.3s; }
+        /* 【修改点】新增图标灰度样式 */
+        .icon-grayscale { filter: grayscale(100%) brightness(0.6) contrast(0.8) drop-shadow(0 1px 2px rgba(0,0,0,0.5)) !important; opacity: 0.8; }
+        .lvl-text { text-shadow: 0 0 10px rgba(0,0,0,0.9), 0 0 20px rgba(99, 102, 241, 0.4); font-family: 'Arial Black', sans-serif; }
+        .tap-feedback:active { background: rgba(255,255,255,0.08); }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #6366f1; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="antialiased select-none">
+    {% raw %}
+    <div id="app" class="max-w-[1600px] mx-auto px-4 py-8">
+        
+        <header class="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+                <div class="flex items-center gap-3">
+                    <h1 class="text-3xl font-black text-indigo-500 tracking-tighter">UID: {{ currentUid }}</h1>
+                    <button @click="switchUid" class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">切换编号</button>
+                </div>
+                <div class="mt-2 text-[10px] text-slate-500 font-bold uppercase tracking-widest">已点亮 {{ ownedCount }} 张卡片</div>
+            </div>
+            
+            <div class="flex flex-col items-end gap-3 w-full md:w-auto">
+                <button @click="generateSummaryImage" :disabled="isGenerating || ownedCount === 0"
+                        class="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white px-6 py-3 rounded-xl font-bold transition w-full md:w-auto">
+                    <div v-if="isGenerating" class="loader"></div>
+                    <span>{{ isGenerating ? '正在绘图...' : '生成极简汇总长图' }}</span>
+                </button>
+                <div @click="copyResult" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 cursor-pointer w-full md:max-w-md">
+                    <div class="font-mono text-[10px] text-indigo-400 break-all truncate">{{ exportString || '尚未点亮...' }}</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
+            <div v-for="card in cards" :key="card.id" 
+                 class="relative aspect-video rounded-3xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl">
+                <img :src="'/static/cards/' + card.filename" :class="['w-full h-full object-cover transition-opacity duration-500', card.breakLevel === -1 ? 'is-unowned' : 'opacity-100']">
+                
+                <div class="absolute inset-0 flex z-30">
+                    <div @click="changeLevel(card, -1)" class="w-1/2 h-full tap-feedback cursor-pointer"></div>
+                    <div @click="changeLevel(card, 1)" class="w-1/2 h-full tap-feedback cursor-pointer"></div>
+                </div>
+
+                <div class="absolute top-4 left-4 z-20">
+                    <img :src="'/static/assets/' + (card.rarity === '3' ? 'ssr' : 'sr') + '_icon.png'" 
+                         :class="['rarity-icon', card.breakLevel === -1 ? 'icon-grayscale' : '']">
+                </div>
+                <div class="absolute top-3 right-3 z-40">
+                    <img v-if="card.attribute" :src="'/static/assets/icon_' + card.attribute + '.png'" 
+                         :class="['attr-icon', card.breakLevel === -1 ? 'icon-grayscale' : '']">
+                </div>
+
+                <div class="absolute bottom-4 left-5 z-20"><div class="lvl-text text-3xl font-black italic tracking-tighter" :class="card.breakLevel === -1 ? 'text-slate-800' : 'text-white'">{{ getLevelText(card.breakLevel) }}</div></div>
+                <div v-if="card.breakLevel >= 0" :class="['absolute inset-0 border-2 rounded-3xl pointer-events-none z-10', card.rarity === '3' ? 'border-yellow-500/20' : 'border-indigo-500/20']"></div>
+            </div>
+        </div>
+
+        <div v-if="showModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90" @click.self="showModal = false">
+            <div class="bg-slate-900 p-4 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+                <div class="flex justify-between items-center mb-4 text-white font-bold"><h3>汇总长图已生成 (长按保存)</h3><button @click="showModal = false">✕</button></div>
+                <div class="flex-1 overflow-y-auto bg-black rounded-xl p-2"><img :src="generatedImageSrc" class="max-w-full mx-auto"></div>
+            </div>
+        </div>
+    </div>
+    {% endraw %}
+
+    <script>
+        const { createApp } = Vue;
+        createApp({
+            data() { return { cards: [], currentUid: '1001', showModal: false, generatedImageSrc: null, isGenerating: false } },
+            computed: {
+                ownedCount() { return this.cards.filter(c => c.breakLevel >= 0).length; },
+                exportString() { return this.cards.filter(c => c.breakLevel >= 0).map(c => `${c.rarity}-${parseInt(c.id)}-${c.breakLevel}`).join(','); }
+            },
+            methods: {
+                getLevelText(lv) { const m = {[-1]:'OFF', 0:'LV.40', 1:'LV.45', 2:'LV.50', 3:'LV.55', 4:'LV.60'}; return m[lv]; },
+                async init(targetUid = null) {
+                    const p = new URLSearchParams(window.location.search);
+                    let uid = targetUid || p.get('uid');
+                    if (!uid) { uid = prompt("请输入UID:", "1001"); if (!uid || isNaN(uid)) uid = "1001"; }
+                    this.currentUid = uid;
+                    window.history.replaceState({}, '', `?uid=${uid}`);
+                    const res = await fetch(`/api/init?uid=${uid}`);
+                    this.cards = await res.json();
+                },
+                switchUid() { const n = prompt("切换UID:", this.currentUid); if (n && !isNaN(n)) this.init(n); },
+                async changeLevel(c, s) {
+                    let v = c.breakLevel + s; if (v > 4) v = 4; if (v < -1) v = -1;
+                    if (c.breakLevel !== v) { c.breakLevel = v; await this.saveToServer(); }
+                },
+                async saveToServer() { await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uid: this.currentUid, cards: this.cards }) }); },
+                async copyResult() { const t = this.exportString; if (!t) return alert("没有可复制的内容"); if (navigator.clipboard && window.isSecureContext) { try { await navigator.clipboard.writeText(t); alert("代码已复制"); return; } catch (e) {} } const a = document.createElement("textarea"); a.value = t; a.style.position = "fixed"; a.style.left = "-9999px"; document.body.appendChild(a); a.focus(); a.select(); try { document.execCommand("copy") ? alert("代码已复制(兼容模式)") : alert("复制失败"); } catch (e) { alert("浏览器不支持自动复制"); } document.body.removeChild(a); },
+                downloadImg(s) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = s; }); },
+                
+                async generateSummaryImage() {
+                    const list = this.cards.filter(c => c.breakLevel >= 0); 
+                    if (list.length === 0) return;
+                    this.isGenerating = true;
+                    try {
+                        const cols = 3; const cardW = 640; const cardH = 360;
+                        const rows = Math.ceil(list.length / cols);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = cols * cardW; canvas.height = rows * cardH;
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#020617'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        const ui = {
+                            ssr: await this.downloadImg('/static/assets/ssr_icon.png'),
+                            sr: await this.downloadImg('/static/assets/sr_icon.png'),
+                            vo: await this.downloadImg('/static/assets/icon_vo.png'),
+                            da: await this.downloadImg('/static/assets/icon_da.png'),
+                            vi: await this.downloadImg('/static/assets/icon_vi.png'),
+                            as: await this.downloadImg('/static/assets/icon_as.png')
+                        };
+
+                        for (let i = 0; i < list.length; i++) {
+                            const c = list[i]; const x = (i % cols) * cardW; const y = Math.floor(i / cols) * cardH;
+                            const img = await this.downloadImg('/static/cards/' + c.filename);
+                            ctx.drawImage(img, x, y, cardW, cardH);
+                            
+                            // 绘制图标
+                            ctx.drawImage(c.rarity==='3'?ui.ssr:ui.sr, x + 20, y + 20, 80, 40);
+                            if (c.attribute) ctx.drawImage(ui[c.attribute], x + cardW - 110, y + 10, 100, 100);
+                            
+                            // 【修改点】绘制文字时增加强阴影
+                            ctx.save(); 
+                            ctx.shadowColor = 'rgba(0, 0, 0, 1)'; // 纯黑强阴影
+                            ctx.shadowBlur = 8; 
+                            ctx.shadowOffsetX = 4;
+                            ctx.shadowOffsetY = 4;
+                            ctx.fillStyle = 'white';
+                            ctx.font = 'italic 900 70px Arial Black'; 
+                            ctx.fillText(this.getLevelText(c.breakLevel), x + 25, y + cardH - 25);
+                            ctx.restore();
+                        }
+                        this.generatedImageSrc = canvas.toDataURL('image/jpeg', 0.9);
+                        this.showModal = true;
+                    } catch (e) { console.error(e); alert("绘图失败"); } finally { this.isGenerating = false; }
+                }
+            },
+            mounted() { this.init() }
+        }).mount('#app');
+    </script>
+</body>
+</html>
